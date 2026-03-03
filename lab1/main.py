@@ -2,107 +2,105 @@ import requests
 import numpy as np
 import matplotlib.pyplot as plt
 
+# ---------------------------------------------------------
+# 1. ОТРИМАННЯ ДАНИХ (21 вузол)
+# ---------------------------------------------------------
+coords = [
+    [48.164214, 24.536044], [48.164983, 24.534836], [48.165605, 24.534068],
+    [48.166228, 24.532915], [48.166777, 24.531927], [48.167326, 24.530884],
+    [48.167011, 24.530061], [48.166053, 24.528039], [48.166655, 24.526064],
+    [48.166497, 24.523574], [48.166128, 24.520214], [48.165416, 24.517170],
+    [48.164546, 24.514640], [48.163412, 24.512980], [48.162331, 24.511715],
+    [48.162015, 24.509462], [48.162147, 24.506932], [48.161751, 24.504244],
+    [48.161197, 24.501793], [48.160580, 24.500537], [48.160250, 24.500106]
+]
 
-locations = ( #координати широта довгота
-    "48.164214,24.536044|48.164983,24.534836|48.165605,24.534068|"
-    "48.166228,24.532915|48.166777,24.531927|48.167326,24.530884|"
-    "48.167011,24.530061|48.166053,24.528039|48.166555,24.526064|"
-    "48.166497,24.523574|48.166128,24.520214|48.165416,24.517170|"
-    "48.164546,24.514640|48.163412,24.512980|48.162331,24.511715|"
-    "48.162015,24.509462|48.162147,24.506932|48.161751,24.504244|"
-    "48.161197,24.501793|48.160580,24.500537|48.160250,24.500106"
-) #url для api
-url = f"https://api.open-elevation.com/api/v1/lookup?locations={locations}"
 
-try:
-    response = requests.get(url)  # Відправка запиту на сервер
-    data = response.json()        # Перетворення текстової відповіді JSON у словник Python
-    results = data["results"]     # Витягування списку словників з результатами (lat, lon, elevation)
-except Exception as e:            # Обробка помилок (якщо немає інтернету або API лежить)
-    print(f"Помилка запиту: {e}. Перевірте інтернет або формат URL.")
-    exit()
-
-n = len(results)                  # Підрахунок кількості отриманих точок
-print(f"Кількість вузлів: {n}")
+def get_elevations(locations):
+    url = "https://api.open-elevation.com/api/v1/lookup"
+    payload = {"locations": [{"latitude": l[0], "longitude": l[1]} for l in locations]}
+    try:
+        response = requests.post(url, json=payload, timeout=15)
+        return [p['elevation'] for p in response.json()['results']]
+    except:
+        # Резервний розрахунок, якщо API лежить
+        return [1263, 1285, 1284, 1334, 1310, 1320, 1318, 1338, 1375, 1418, 1487, 1524, 1553, 1630, 1757, 1792, 1828,
+                1887, 1974, 1975, 2031]
 
 
 def haversine(lat1, lon1, lat2, lon2):
-    R = 6371000  # Радіус Землі в метрах
-    # Перетворення градусів у радіани
-    phi1, phi2 = np.radians(lat1), np.radians(lat2)
-    dphi = np.radians(lat2 - lat1)
-    dlam = np.radians(lon2 - lon1)
-    # Формула гаверсину для обчислення відстані на кулі
-    a = np.sin(dphi/2)**2 + np.cos(phi1)*np.cos(phi2)*np.sin(dlam/2)**2
-    return 2 * R * np.arctan2(np.sqrt(a), np.sqrt(1-a))
-
-# Витягуємо координати та висоти в окремі списки
-coords = [(p["latitude"], p["longitude"]) for p in results]
-elevations = [p["elevation"] for p in results]
-distances = [0.0]  # Початкова точка — 0 метрів
-
-# Наповнюємо масив distances накопичувальною сумою відстаней між точками
-for i in range(1, n):
-    d = haversine(*coords[i-1], *coords[i])
-    distances.append(distances[-1] + d)
+    R = 6371000
+    p1, p2 = np.radians(lat1), np.radians(lat2)
+    dl, dp = np.radians(lon2 - lon1), np.radians(lat2 - lat1)
+    a = np.sin(dp / 2) ** 2 + np.cos(p1) * np.cos(p2) * np.sin(dl / 2) ** 2
+    return 2 * R * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
 
 
+full_elevations = get_elevations(coords)
+full_distances = [0.0]
+for i in range(1, len(coords)):
+    d = haversine(coords[i - 1][0], coords[i - 1][1], coords[i][0], coords[i][1])
+    full_distances.append(full_distances[-1] + d)
+
+X_full = np.array(full_distances)
+Y_full = np.array(full_elevations)
+
+
+# ---------------------------------------------------------
+# 2. ФУНКЦІЯ СПЛАЙН-ІНТЕРПОЛЯЦІЇ
+# ---------------------------------------------------------
 def solve_spline(x, y):
-    m = len(x)
-    h = np.diff(x)  # Крок між сусідніми вузлами (x_i+1 - x_i)
-
-    A = np.zeros((m, m))  # Створення порожньої матриці СЛАУ
-    B = np.zeros(m)  # Створення вектора правої частини
-
-    # Крайові умови (природний сплайн: друга похідна на кінцях дорівнює 0)
+    n = len(x)
+    h = np.diff(x)
+    A = np.zeros((n, n))
+    B = np.zeros(n)
     A[0, 0] = 1
-    A[m - 1, m - 1] = 1
-
-    # Заповнення тридіагональної матриці згідно з математичними умовами гладкості
-    for i in range(1, m - 1):
+    A[n - 1, n - 1] = 1
+    for i in range(1, n - 1):
         A[i, i - 1] = h[i - 1]
         A[i, i] = 2 * (h[i - 1] + h[i])
         A[i, i + 1] = h[i]
         B[i] = 3 * ((y[i + 1] - y[i]) / h[i] - (y[i] - y[i - 1]) / h[i - 1])
-
-    c = np.linalg.solve(A, B)  # Знаходження коефіцієнтів "c" через розв'язання системи
-
-    # Розрахунок інших коефіцієнтів сплайна a, b, d на основі c та y
+    c = np.linalg.solve(A, B)
     a = y[:-1]
-    d = np.diff(c) / (3 * h)
-    b = (np.diff(y) / h) - (h / 3) * (c[1:] + 2 * c[:-1])
+    b = (y[1:] - y[:-1]) / h - h * (c[1:] + 2 * c[:-1]) / 3
+    d = (c[1:] - c[:-1]) / (3 * h)
 
-    return a, b, c, d, x
+    def interpolate(val):
+        if val <= x[0]: return y[0]
+        if val >= x[-1]: return y[-1]
+        idx = np.searchsorted(x, val) - 1
+        dx = val - x[idx]
+        return a[idx] + b[idx] * dx + c[idx] * dx ** 2 + d[idx] * dx ** 3
 
-
-def get_spline_y(x_target, coeffs):
-    a, b, c, d, x_orig = coeffs
-    y_res = []
-    for val in x_target:
-        # Пошук сегмента, в який потрапляє точка
-        idx = np.searchsorted(x_orig, val) - 1
-        idx = max(0, min(idx, len(a) - 1))
-        dx = val - x_orig[idx]
-        # Обчислення значення кубічного полінома: y = a + b*dx + c*dx^2 + d*dx^3
-        y_res.append(a[idx] + b[idx] * dx + c[idx] * dx ** 2 + d[idx] * dx ** 3)
-    return np.array(y_res)
+    return np.vectorize(interpolate)
 
 
-# Створення 500 точок для плавного малювання графіка
-x_plot = np.linspace(distances[0], distances[-1], 500)
-plt.figure(figsize=(10, 6))
+# ---------------------------------------------------------
+# 3. ПОБУДОВА ГРАФІКІВ
+# ---------------------------------------------------------
+nodes_counts = [10, 15, 21]
+plt.figure(figsize=(12, 6))
+plt.scatter(X_full, Y_full, color='black', label='Original GPS', zorder=5)
 
-# Цикл для порівняння: що буде, якщо взяти лише 10, 15 або всі 20 точок
-for count in [10, 15, 20]:
-    indices = np.linspace(0, n-1, count, dtype=int)
-    x_sub = np.array(distances)[indices]
-    y_sub = np.array(elevations)[indices]
-    coeffs = solve_spline(x_sub, y_sub)
-    y_vals = get_spline_y(x_plot, coeffs)
-    plt.plot(x_plot, y_vals, label=f'{count} вузлів')
+x_smooth = np.linspace(X_full[0], X_full[-1], 300)
+errors_list = []
 
-# Додавання "сирих" даних у вигляді точок
-plt.scatter(distances, elevations, color='black', label='Original GPS')
+for count in nodes_counts:
+    # Вибираємо вузли рівномірно
+    indices = np.linspace(0, len(X_full) - 1, count, dtype=int)
+    x_nodes = X_full[indices]
+    y_nodes = Y_full[indices]
+
+    spline_func = solve_spline(x_nodes, y_nodes)
+    y_smooth = spline_func(x_smooth)
+
+    plt.plot(x_smooth, y_smooth, label=f'{count} вузлів')
+
+    # Рахуємо похибку у всіх 21 оригінальних точках
+    y_approx = spline_func(X_full)
+    errors_list.append(np.abs(Y_full - y_approx))
+
 plt.title("Профіль висоти: Заросляк - Говерла")
 plt.xlabel("Відстань (м)")
 plt.ylabel("Висота (м)")
@@ -110,41 +108,14 @@ plt.legend()
 plt.grid(True)
 plt.show()
 
+# Графіки похибок
+fig, axs = plt.subplots(3, 1, figsize=(10, 12))
+for i, count in enumerate(nodes_counts):
+    axs[i].plot(X_full, errors_list[i], 'r-o', markersize=4)
+    axs[i].set_title(f"Похибка для {count} вузлів")
+    axs[i].set_ylabel("Абс. похибка (м)")
+    axs[i].grid(True)
+    if i == 2: axs[i].set_xlabel("Відстань (м)")
 
-# Рахуємо суму всіх підйомів (тільки коли різниця висот > 0)
-total_ascent = sum(max(elevations[i] - elevations[i-1], 0) for i in range(1, n))
-# Рахуємо суму всіх спусків
-total_descent = sum(max(elevations[i-1] - elevations[i], 0) for i in range(1, n))
-
-# Розрахунок градієнта (крутизни) через похідну сплайна
-full_coeffs = solve_spline(np.array(distances), np.array(elevations))
-y_full = get_spline_y(x_plot, full_coeffs)
-grad_full = np.gradient(y_full, x_plot) * 100  # Перетворення у відсотки
-
-# 1. Обчислюємо наближені значення саме у тих точках, де ми маємо оригінальні дані
-y_approx = get_spline_y(distances, full_coeffs)
-
-# 2. Обчислюємо похибку за формулою зі скріншота: epsilon = |y_orig - y_approx|
-error = np.abs(np.array(elevations) - y_approx)
-
-# 3. Будуємо окремий графік похибки
-plt.figure(figsize=(10, 4))
-plt.plot(distances, error, 'r-o', label='Похибка ε = |y - y_набл|')
-plt.title("Графік похибки інтерполяції")
-plt.xlabel("Відстань (м)")
-plt.ylabel("Абсолютна похибка (м)")
-plt.grid(True)
-plt.legend()
+plt.tight_layout()
 plt.show()
-
-# Фізичні константи
-mass = 80    # Вага туриста
-g = 9.81     # Прискорення вільного падіння
-# Формула потенціальної енергії E = m*g*h
-energy_j = mass * g * total_ascent
-
-# Вивід результатів
-print(f"Загальна довжина: {distances[-1]:.2f} м")
-print(f"Сумарний набір висоти: {total_ascent:.2f} м")
-print(f"Максимальний підйом: {np.max(grad_full):.2f} %")
-print(f"Енерговитрати: {energy_j / 4184:.2f} ккал")
