@@ -1,0 +1,90 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+def generate_data(n=100, x_val=2.5):
+    A = np.random.uniform(1.0, 10.0, (n, n))
+    x_true = np.full(n, x_val)
+    B = np.dot(A, x_true)
+    np.savetxt('matrix_A.txt', A)
+    np.savetxt('vector_B.txt', B)
+    return n
+
+def load_system():
+    A = np.loadtxt('matrix_A.txt')
+    B = np.loadtxt('vector_B.txt')
+    return A, B
+
+def get_lu(A, n):
+    L = np.zeros((n, n))
+    U = np.eye(n)
+    for k in range(n):
+        for i in range(k, n):
+            L[i, k] = A[i, k] - np.dot(L[i, :k], U[:k, k])
+        for i in range(k + 1, n):
+            U[k, i] = (A[k, i] - np.dot(L[k, :k], U[:k, i])) / L[k, k]
+    return L, U
+
+def lu_solve(L, U, B, n):
+    z = np.zeros(n)
+    for k in range(n):
+        z[k] = (B[k] - np.dot(L[k, :k], z[:k])) / L[k, k]
+    x = np.zeros(n)
+    for k in range(n - 1, -1, -1):
+        x[k] = z[k] - np.dot(U[k, k + 1:], x[k + 1:])
+    return x
+
+n = generate_data()
+A, B = load_system()
+L, U = get_lu(A, n)
+
+np.savetxt('matrix_L.txt', L)
+np.savetxt('matrix_U.txt', U)
+
+x_0 = lu_solve(L, U, B, n)
+eps_initial = np.max(np.abs(np.dot(A, x_0) - B))
+print(f"Початкова точність: {eps_initial:.2e}")
+
+x_curr = x_0.copy()
+eps_target = 1e-14
+for i in range(1, 21):
+    R = B - np.dot(A, x_curr)
+    if np.max(np.abs(R)) < eps_target:
+        break
+    delta_x = lu_solve(L, U, R, n)
+    x_curr += delta_x
+    print(f"Ітерація {i}, точність: {np.max(np.abs(B - np.dot(A, x_curr))):.2e}")
+
+print(" X (перші 5 елементів):", x_curr[:5])
+
+n = generate_data()
+A, B = load_system()
+L, U = get_lu(A, n)
+x_curr = lu_solve(L, U, B, n)
+
+eps_target = 1e-14
+history = []
+
+initial_res = np.max(np.abs(np.dot(A, x_curr) - B))
+history.append(initial_res)
+
+for i in range(1, 21):
+    R = B - np.dot(A, x_curr)
+    norm_R = np.max(np.abs(R))
+
+    if norm_R < eps_target:
+        break
+
+    delta_x = lu_solve(L, U, R, n)
+    x_curr += delta_x
+
+    new_res = np.max(np.abs(B - np.dot(A, x_curr)))
+    history.append(new_res)
+
+plt.figure(figsize=(10, 6))
+plt.plot(range(len(history)), history, marker='o', linestyle='-', color='b')
+plt.yscale('log')
+plt.xlabel('Номер ітерації')
+plt.ylabel('Норма похибки (нев\'язка)')
+plt.title('Графік збіжності ітераційного уточнення розв\'язку')
+plt.grid(True, which="both", ls="-", alpha=0.5)
+plt.show()
