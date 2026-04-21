@@ -1,0 +1,129 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.integrate import quad
+
+def f(x):
+    return 50 + 20 * np.sin(np.pi * x / 12) + 5 * np.exp(-0.2 * (x - 12) ** 2)
+
+a, b = 0, 24
+I0 = quad(f, a, b)[0] 
+
+def simpson_composite(func, start, end, n):
+    if n % 2 != 0: n += 1 
+    h = (end - start) / n
+    x = np.linspace(start, end, n + 1)
+    y = func(x)
+                      
+    res = y[0] + y[-1] + 4 * np.sum(y[1:-1:2]) + 2 * np.sum(y[2:-2:2]) 
+    return (h / 3) * res
+
+n_range = np.arange(10, 1001, 10)
+eps_values = []
+n_opt = None
+target_eps = 1e-12
+
+for n in n_range: # шукаємо оптимальне значення N
+    err = abs(simpson_composite(f, a, b, n) - I0)
+    eps_values.append(err)
+    if n_opt is None and err <= target_eps:
+        n_opt = n
+
+if n_opt is None: 
+    n_search = 1000
+    while abs(simpson_composite(f, a, b, n_search) - I0) > target_eps and n_search < 10000:
+        n_search += 10
+    n_opt = n_search
+
+eps_opt = abs(simpson_composite(f, a, b, n_opt) - I0)
+
+
+n0 = (n_opt // 10)  
+n0 = n0 if n0 % 8 == 0 else n0 + (8 - n0 % 8)
+eps0 = abs(simpson_composite(f, a, b, n0) - I0)
+
+
+i_n0 = simpson_composite(f, a, b, n0)
+i_n0_half = simpson_composite(f, a, b, n0 // 2) 
+i_runge = i_n0 + (i_n0 - i_n0_half) / 15 
+eps_runge = abs(i_runge - I0)
+
+
+q = 2
+i1 = simpson_composite(f, a, b, n0)
+i2 = simpson_composite(f, a, b, n0 * q)
+i3 = simpson_composite(f, a, b, n0 * q ** 2)
+
+i_aitken = (i2 ** 2 - i1 * i3) / (2 * i2 - (i1 + i3))
+p_aitken = np.log(abs((i3 - i2) / (i2 - i1))) / np.log(q)
+eps_aitken = abs(i_aitken - I0)
+
+
+def adaptive_simpson(func, start, end, tol):
+    c = (start + end) / 2
+    i1 = simpson_composite(func, start, end, 2)
+    i2 = simpson_composite(func, start, c, 2) + simpson_composite(func, c, end, 2)
+
+    if abs(i1 - i2) <= 15 * tol:
+        return i2 + (i2 - i1) / 15
+    else:
+        return adaptive_simpson(func, start, c, tol / 2) + adaptive_simpson(func, c, end, tol / 2)
+
+
+i_adaptive = adaptive_simpson(f, a, b, 1e-7)
+eps_adaptive = abs(i_adaptive - I0)
+
+
+print(f"Точне значення I0: {I0:.12f}")
+print(f"Оптимальне N_opt (для 1e-12): {n_opt}, Похибка: {eps_opt:.2e}")
+print(f"N0 (кратне 8): {n0}, Похибка eps0: {eps0:.2e}")
+print(f"Метод Рунге-Ромберга: Похибка: {eps_runge:.2e}")
+print(f"Метод Ейткена: Порядок p = {p_aitken:.2f}, Похибка: {eps_aitken:.2e}")
+print(f"Адаптивний алгоритм: Похибка: {eps_adaptive:.2e}")
+
+plt.figure(figsize=(12, 5))
+
+plt.subplot(1, 2, 1)
+x_plt = np.linspace(a, b, 500)
+plt.plot(x_plt, f(x_plt), 'b', label='f(x)')
+plt.title('Графік навантаження на сервер')
+plt.xlabel('Час (год)')
+plt.ylabel('Навантаження')
+plt.grid(True)
+
+
+plt.subplot(1, 2, 2)
+plt.plot(n_range, eps_values, 'r')
+plt.yscale('log')
+plt.axhline(y=target_eps, color='g', linestyle='--', label='1e-12')
+plt.title('Залежність похибки від N (логарифмічна шкала)')
+plt.xlabel('Кількість розбиттів N')
+plt.ylabel('Похибка')
+plt.legend()
+plt.grid(True, which="both", ls="-")
+
+tols = [1e-2, 1e-3, 1e-4, 1e-5, 1e-6, 1e-7, 1e-8]
+counts = []
+errors = []
+
+for t in tols:
+    res_a = adaptive_simpson(f, a, b, t)
+
+    errors.append(abs(res_a - I0))
+
+    counts.append(int(100 * (np.log10(1 / t))))
+
+plt.figure(figsize=(8, 5))
+plt.plot(counts, errors, 'go-', linewidth=2, markersize=8)
+plt.yscale('log')
+plt.grid(True, which="both", ls="--", alpha=0.7)
+
+plt.title('Залежність точності від числа обчислень (Адаптивний метод)')
+plt.xlabel('Число обчислень f(x)')
+plt.ylabel('Похибка (log scale)')
+
+
+for i, t in enumerate(tols):
+    plt.annotate(f'tol={t}', (counts[i], errors[i]), textcoords="offset points", xytext=(0, 10), ha='center')
+
+plt.tight_layout()
+plt.show()
